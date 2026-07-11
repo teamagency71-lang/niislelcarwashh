@@ -659,7 +659,9 @@ let accountApiChecked = false;
 let accountApiCheckPromise = null;
 let accountRequestSyncPromise = null;
 let accountApiUnavailableMessage = "";
-let accountApiToken = sessionStorage.getItem("cwAccountApiToken") || "";
+let accountApiToken = localStorage.getItem("cwAccountApiToken") || sessionStorage.getItem("cwAccountApiToken") || "";
+if (accountApiToken) localStorage.setItem("cwAccountApiToken", accountApiToken);
+sessionStorage.removeItem("cwAccountApiToken");
 const themeTogglePositionKey = "cwThemeTogglePosition";
 let themeToggleDrag = null;
 let themeToggleHold = null;
@@ -856,7 +858,7 @@ async function accountApiRequest(path, options = {}) {
   if (!response.ok) {
     if (response.status === 401 && path !== "/api/accounts/login") {
       accountApiToken = "";
-      sessionStorage.removeItem("cwAccountApiToken");
+      localStorage.removeItem("cwAccountApiToken");
     }
     const error = new Error(body.error || "Сервертэй холбогдох үед алдаа гарлаа.");
     error.status = response.status;
@@ -869,14 +871,14 @@ async function accountApiRequest(path, options = {}) {
 
 function setAccountApiSession(session) {
   accountApiToken = String(session?.token || "");
-  if (accountApiToken) sessionStorage.setItem("cwAccountApiToken", accountApiToken);
-  else sessionStorage.removeItem("cwAccountApiToken");
+  if (accountApiToken) localStorage.setItem("cwAccountApiToken", accountApiToken);
+  else localStorage.removeItem("cwAccountApiToken");
 }
 
-function createApiManagedAccount(account) {
+function createApiManagedAccount(account, password = "") {
   return {
     ...account,
-    password: "",
+    password,
     apiManaged: true,
   };
 }
@@ -895,7 +897,12 @@ function upsertAccount(account) {
 
   const existingIndex = accounts.findIndex((item) => item.id === normalized.id || item.username === normalized.username);
   if (existingIndex >= 0) {
-    accounts[existingIndex] = { ...accounts[existingIndex], ...normalized };
+    const existing = accounts[existingIndex];
+    accounts[existingIndex] = {
+      ...existing,
+      ...normalized,
+      password: normalized.password || existing.password,
+    };
     saveAccounts();
     return accounts[existingIndex];
   }
@@ -928,6 +935,36 @@ function replaceApiAccountRequests(requests = []) {
   saveAccountRequests();
 }
 
+async function ensureApproverApiSession(forceLogin = false) {
+  if (!isApproverAccount()) return false;
+  if (accountApiToken && !forceLogin) return true;
+  if (forceLogin) setAccountApiSession(null);
+
+  const account = getActiveAccount();
+  const password = String(account?.password || "");
+  if (!password) return false;
+
+  try {
+    const result = await accountApiRequest("/api/accounts/login", {
+      method: "POST",
+      body: JSON.stringify({
+        username: accountApproverUsername,
+        password,
+        name: account?.name || "Удирдлага",
+      }),
+    });
+    setAccountApiSession(result.session);
+    if (account) {
+      account.apiManaged = true;
+      saveAccounts();
+    }
+    return Boolean(accountApiToken);
+  } catch (error) {
+    setAccountApiSession(null);
+    return false;
+  }
+}
+
 async function syncAccountRequestsFromApi(forceHealthCheck = false) {
   if (!isApproverAccount()) return false;
   if (accountRequestSyncPromise) return accountRequestSyncPromise;
@@ -939,7 +976,14 @@ async function syncAccountRequestsFromApi(forceHealthCheck = false) {
     }
 
     try {
-      const data = await accountApiRequest(`/api/account-requests/pending?approverUsername=${encodeURIComponent(accountApproverUsername)}`);
+      await ensureApproverApiSession();
+      let data;
+      try {
+        data = await accountApiRequest(`/api/account-requests/pending?approverUsername=${encodeURIComponent(accountApproverUsername)}`);
+      } catch (error) {
+        if (error.status !== 401 || !(await ensureApproverApiSession(true))) throw error;
+        data = await accountApiRequest(`/api/account-requests/pending?approverUsername=${encodeURIComponent(accountApproverUsername)}`);
+      }
       replaceApiAccountRequests(data.requests || []);
       renderAccountRequests();
       return true;
@@ -4649,7 +4693,7 @@ accountLoginForm?.addEventListener("submit", async (event) => {
           name: username === accountApproverUsername ? savedAccount?.name || "Удирдлага" : undefined,
         }),
       });
-      const account = upsertAccount(createApiManagedAccount(result.account));
+      const account = upsertAccount(createApiManagedAccount(result.account, password));
       if (!account) {
         setAccountFeedback("Account мэдээлэл уншихад алдаа гарлаа.", "error");
         return;
@@ -4735,7 +4779,7 @@ accountSignupForm?.addEventListener("submit", async (event) => {
       });
 
       if (result.status === "approved" && result.account) {
-        const account = upsertAccount(createApiManagedAccount(result.account));
+        const account = upsertAccount(createApiManagedAccount(result.account, password));
         if (!account) {
           setAccountFeedback("Account мэдээлэл хадгалахад алдаа гарлаа.", "error");
           return;
