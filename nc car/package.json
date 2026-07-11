@@ -1,0 +1,21 @@
+{
+  "name": "niislel-car-wash",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Niislel Car Wash management website with shared account approval backend.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "build:netlify": "node scripts/prepare-netlify.js",
+    "check": "node --check app.js && node --check server.js && node --check netlify/functions/api.mjs && node scripts/prepare-netlify.js"
+  },
+  "dependencies": {
+    "@netlify/blobs": "^10.7.9",
+    "bcryptjs": "^2.4.3",
+    "express": "^4.19.2",
+    "pg": "^8.12.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
